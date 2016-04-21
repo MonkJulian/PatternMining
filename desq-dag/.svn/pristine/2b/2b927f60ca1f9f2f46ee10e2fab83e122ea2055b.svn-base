@@ -1,0 +1,334 @@
+package fst;
+
+import hierarchy.SimpleHierarchy;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Map;
+import java.util.Set;
+
+import fst.OutputLabel.Type;
+
+
+/**
+ * FstOperations.java
+ * @author Kaustubh Beedkar {kbeedkar@uni-mannheim.de}
+ */
+public final class FstOperations {
+
+	private FstOperations() {
+	};
+
+	/** Returns an FST that is concatenation of two FSTs */
+	public static Fst concatenate(Fst a, Fst b) {
+		for (State state : a.getAcceptStates()) {
+			state.accept = false;
+			state.addEpsilon(b.initialState);
+		}
+		return a;
+	}
+
+	/** Returns an FST that is a union of two FSTs */
+	public static Fst union(Fst a, Fst b) {
+		State s = new State();
+		s.addEpsilon(a.initialState);
+		s.addEpsilon(b.initialState);
+		a.initialState = s;
+		return a;
+	}
+
+	/** Returns an FST that accepts a kleene star of a given FST */
+	public static Fst kleene(Fst a) {
+		State s = new State();
+		s.accept = true;
+		s.addEpsilon(a.initialState);
+		for (State p : a.getAcceptStates())
+			p.addEpsilon(s);
+		a.initialState = s;
+		return a;
+	}
+
+	/** Returns an FST that accepts a kleene plus of a given FST */
+	public static Fst plus(Fst a) {
+		// return concatenate(n, kleene(n));
+		for (State s : a.getAcceptStates()) {
+			s.addEpsilon(a.initialState);
+		}
+		return a;
+	}
+
+	/** Returns an FST that accepts zero or one of a given NFA */
+	public static Fst optional(Fst a) {
+		State s = new State();
+		s.addEpsilon(a.initialState);
+		s.accept = true;
+		a.initialState = s;
+		return a;
+	}
+
+	public static Fst repeatMax(Fst a, int max) {
+		if (max == 0) {
+			System.err.println("ERROR");
+			System.exit(-1);
+		}
+		Fst[] fstList = new Fst[max - 1];
+		for (int i = 0; i < fstList.length; ++i) {
+			fstList[i] = a.clone();
+		}
+		for (int i = 0; i < fstList.length; ++i) {
+			for (State state : a.getAcceptStates()) {
+				state.accept = false;
+				state.addEpsilon(fstList[i].initialState);
+			}
+		}
+		return a;
+	}
+	
+	public static Fst repeatMin(Fst a, int min) {
+		Fst aPlus = plus(a.clone());
+		Fst aMax = repeatMax(a.clone(), min - 1);
+		return concatenate(aMax, aPlus);
+	}
+	
+	public static Fst repeatMinMax(Fst a, int min, int max) {
+		max -= min;
+		Fst fst;
+		if (min == 0) {
+			fst = new Fst();
+			fst.initialState.accept = true;
+		} else if (min == 1) {
+			fst = a.clone();
+		} else {
+			fst = repeatMax(a.clone(), min);
+		}
+		if (max > 0) {
+			Fst aa = a.clone();
+			while (--max > 0) {
+				Fst ab = a.clone();
+				for (State state : ab.getAcceptStates()) {
+					state.addEpsilon(aa.initialState);
+				}
+				aa = ab;
+			}
+			for (State state : fst.getAcceptStates()) {
+				state.addEpsilon(aa.initialState);
+			}
+		}
+		return fst;
+	}
+	
+	/** Determinize the given FST; converts a cFST to pFST*/
+	public static Fst prioritize(Fst fst) {
+		Set<State> initialStates = new HashSet<State>();
+		initialStates.add(fst.initialState);
+		return prioritize(fst, initialStates);
+	}
+	
+	/** Determinze the given FST given a set of initial states
+	 *  pFST construction 
+	 */
+	public static Fst prioritize(Fst fst, Set<State> initialStates) {
+		Fst detFst = new Fst();
+		
+		HashMap<Set<State>, State> pFstStates = new HashMap<Set<State>, State>();
+		pFstStates.put(initialStates, detFst.initialState);
+		
+		// Map from output label to cFST states
+		HashMap<OutputLabel, Set<State>> M = new HashMap<OutputLabel, Set<State>>();
+		
+		// Unprocessed pFST states
+		LinkedList<Set<State>> unprocessedStates = new LinkedList<Set<State>>();
+		unprocessedStates.add(initialStates);
+		
+		// Processed pFST states
+		HashSet<Set<State>> processedStates = new HashSet<Set<State>>();
+		
+		while (unprocessedStates.size() > 0) {
+			// Process a pFST state
+			Set<State> fromCFstStates = unprocessedStates.removeFirst();
+
+			if (!processedStates.contains(fromCFstStates)) {
+				
+				State fromPFstState = pFstStates.get(fromCFstStates);
+				
+				for (int iLabel : getInputLabels(fromCFstStates)) {
+					// Compute reachable cFST states by output label
+
+					M.clear();
+
+					// for (output-lable,toState) pairs in delta(ss,iLabel)
+					for (State cFstState : fromCFstStates) {
+						for (Transition t : cFstState.transitions) {
+							if (subsumes(t.iLabel, iLabel)) {
+								OutputLabel oLabel = simplify(t.oLabel, iLabel);
+								Set<State> reachableCFstStates = M.get(oLabel);
+								if (reachableCFstStates == null) {
+									reachableCFstStates = new HashSet<State>();
+									M.put(oLabel, reachableCFstStates);
+								}
+								reachableCFstStates.add(t.to);
+							}
+						}
+					}
+
+					// Add pFST transitions and (new state)
+					for (OutputLabel oLabel : M.keySet()) {
+						Set<State> reachableCFstStates = M.get(oLabel);
+						if (!processedStates.contains(reachableCFstStates)) {
+							unprocessedStates.add(reachableCFstStates);
+							//pFstStates.put(cFstStates, new State());
+						}
+						
+						State toPFstState = pFstStates.get(reachableCFstStates);
+						if(toPFstState == null) {
+							toPFstState = new State();
+							pFstStates.put(reachableCFstStates, toPFstState);
+						}
+						
+						fromPFstState.addTransition(new Transition(iLabel, oLabel, toPFstState));
+					}
+				}
+			}
+			
+			// Mark ss as processed
+			processedStates.add(fromCFstStates);
+			
+			// Final state?
+			// TODO: Integrate above
+			for(State s : fromCFstStates){
+				if(s.accept) {
+					pFstStates.get(fromCFstStates).accept = true;
+				}
+			}
+		}
+		detFst.priorirized = true;
+		return detFst;
+	}
+	
+	/** Returns simplified output label */
+	private static OutputLabel simplify(OutputLabel oLabel, int iLabel) {
+		OutputLabel simplOLabel = new OutputLabel(oLabel);
+		// input label is the form of w=
+		if(iLabel < 0) {
+			if (oLabel.type == Type.SELF || oLabel.type == Type.SELFGENERALIZE) {
+				simplOLabel.type = Type.CONSTANT;
+				simplOLabel.item = -iLabel;
+			}
+		}
+		return simplOLabel;
+	}
+
+	/** Check if iLabel1 subsumes iLabel2, i.e. iLabel2 < iLabel1 
+	 * in < in, w= < w < w'=ansc(w) < .  
+	 */
+	public static boolean subsumes(int iLabel1, int iLabel2) {
+		iLabel1 = Math.abs(iLabel1);
+		iLabel2 = Math.abs(iLabel2);
+		if (iLabel1 == iLabel2 || SimpleHierarchy.getInstance().isParent(iLabel1, iLabel2)) {
+			return true;
+		}
+		return false;
+	}
+
+	
+	/** Returns set of input labels associated with a state */
+	public static Set<Integer> getInputLabels(State s) {
+		Set<Integer> iLabels = new HashSet<Integer>();
+		for(Transition t : s.transitions) {
+			iLabels.add(t.iLabel);
+		}
+		return iLabels;
+	}
+	
+	/** Returns set of input labels associated with a set of states */
+	public static Set<Integer> getInputLabels(Set<State> sset) {
+		Set<Integer> iLabels = new HashSet<Integer>();
+		for(State s : sset) {
+			for (Transition t : s.transitions) {
+				iLabels.add(t.iLabel);
+			}
+		}
+		return iLabels;
+	}
+	
+	
+	/** Reverses a FST 
+	 *  Sets final states as initial states
+	 */
+	public static void reverse(Fst fst) {
+		HashMap<State, HashSet<Transition>> reverseTMap = new HashMap<State, HashSet<Transition>>();
+		
+		Set<State> visited 	= new HashSet<State>();
+		LinkedList<State> worklist = new LinkedList<State>();
+		
+		worklist.add(fst.initialState);
+		
+		// Initialize map with starting state
+		reverseTMap.put(fst.initialState, new HashSet<Transition>());
+	
+		while (worklist.size() > 0) {
+			State s = worklist.removeFirst();
+			if (!visited.contains(s)) {
+
+				for (Transition t : s.transitions) {
+					// if (!visited.contains(t.to)) {
+
+					HashSet<Transition> tSet = reverseTMap.get(t.to);
+					if (tSet == null) {
+						tSet = new HashSet<Transition>();
+						reverseTMap.put(t.to, tSet);
+					}
+					tSet.add(new Transition(t.iLabel, t.oLabel, s));
+
+					// visited.add(t.to);
+					worklist.add(t.to);
+					// }
+				}
+				visited.add(s);
+			}
+		}
+		
+
+		Set<State> accepts = new HashSet<State>();
+		
+		for(State s : visited) {
+			s.transitions = reverseTMap.get(s);
+			if(s.accept) {
+				accepts.add(s);
+				s.accept = false;
+			}
+		}
+		
+		fst.reverse = true;
+		fst.priorirized = false;
+		fst.setInitialStates(accepts);
+		
+	}
+	
+	
+	/**
+	 * Minimizes a FST along the lines of Brzozowski's algorithm
+	 * @param fst
+	 */
+	public static Fst minimize(Fst fst) {
+	
+		// Reverse and add a new initial state to make sure all initial states are reachable
+		fst.reverse();
+		fst.initialState.accept = true;
+	
+		// Prioritize
+		Fst f1 = prioritize(fst, fst.initialStates);
+		
+		
+		// Reverse 
+		f1.reverse();
+		f1.initialState.accept = true;
+		
+		// Prioritize
+		Fst f2 = prioritize(f1, f1.initialStates);
+		
+		return f2;
+	}
+	
+}

@@ -1,0 +1,147 @@
+package utils;
+
+import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+
+import java.io.BufferedReader;
+import java.io.DataInputStream;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
+
+/**
+ * Dictionary.java
+ * @author Kaustubh Beedkar {kbeedkar@uni-mannheim.de}
+ */
+public class Dictionary {
+
+	private static Dictionary instance = null;
+
+	protected Dictionary() {
+
+	}
+
+	public static Dictionary getInstance() {
+		if (instance == null) {
+			instance = new Dictionary();
+		}
+		return instance;
+	}
+
+	protected int[] fList;
+
+	protected int[][] parents;
+
+	protected int[][] desc;
+	
+	Int2ObjectOpenHashMap<String> itemIdToItemMap = new Int2ObjectOpenHashMap<String>();
+
+	Object2IntOpenHashMap<String> itemToItemIdMap = new Object2IntOpenHashMap<String>();
+	
+	public void load(String fileName) throws IOException {
+
+		BufferedReader br = null;
+
+		FileInputStream fstream = new FileInputStream(fileName);
+		DataInputStream in = new DataInputStream(fstream);
+		br = new BufferedReader(new InputStreamReader(in));
+
+		ObjectArrayList<int[]> parentList = new ObjectArrayList<int[]>();
+		parentList.add(new int[0]);
+		
+		IntArrayList supportList = new IntArrayList();
+		supportList.add(0);
+		
+
+		String line = null;
+
+		while ((line = br.readLine()) != null) {
+			String[] splits = line.split("\t");
+			int itemId = Integer.parseInt(splits[3].trim());
+			int itemSupport = Integer.parseInt(splits[2].trim());
+			String[] parentsAsString = splits[4].trim().split(",");
+			
+			// Quick and dirty sanity check
+			if (itemId != parentList.size()) {
+				System.err.println("Dictionary not sorted");
+				System.exit(-1);
+			}
+
+			parentList.add(new int[parentsAsString.length]);
+			int psize = 0;
+			for(String p: parentsAsString ) {
+				parentList.get(itemId)[psize++] = Integer.parseInt(p.trim());
+			}
+			
+			supportList.add(itemSupport);
+
+			itemIdToItemMap.put(itemId, splits[0].trim());
+			itemToItemIdMap.put(splits[0].trim(), itemId);
+		}
+		br.close();
+
+		
+		parents = new int[parentList.size()][];
+		for(int i = 0; i < parentList.size(); ++i) {
+			parents[i] = new int[parentList.get(i).length];
+			System.arraycopy(parentList.get(i), 0, parents[i], 0, parentList.get(i).length);
+		}
+		parentList = null;
+		
+		fList = new int[supportList.size()];
+		supportList.toArray(fList);
+		
+		supportList = null;
+		
+		// Precompute descendants
+		IntArrayList[] tempDescList = new IntArrayList[parents.length];
+		for(int i = 0; i < parents.length; ++i) {
+			tempDescList[i] = new IntArrayList();
+		}
+		
+		for(int i = 1; i < parents.length; ++i) {
+			for(int j = 0; j < parents[i].length; ++j) {
+				tempDescList[parents[i][j]].add(i);
+			}
+		}
+		
+		desc = new int[tempDescList.length][];
+		desc[0] = new int[0];
+		for(int i = 1; i < desc.length; ++i) {
+			desc[i] = new int[tempDescList[i].size()];
+			tempDescList[i].toArray(desc[i]);
+		}
+		tempDescList = null;
+	}
+
+	public Int2ObjectOpenHashMap<String> getItemIdToName() {
+		return itemIdToItemMap;
+	}
+
+	public int[][] getParents() {
+		return parents;
+	}
+
+	public int[] getFlist() {
+		return fList;
+	}
+	
+	public int[][] getDesc() {
+		return desc;
+	}
+
+	public int getItemId(String itemName) {
+		return itemToItemIdMap.getInt(itemName);
+	}
+	
+	public int[] getDesc(int itemId) {
+		return desc[itemId];
+	}
+	
+	public int getTotalItems() {
+		return fList.length;
+	}
+}

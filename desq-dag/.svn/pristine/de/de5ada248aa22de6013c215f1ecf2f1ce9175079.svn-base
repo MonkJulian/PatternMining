@@ -1,0 +1,228 @@
+package fst;
+
+
+import java.util.Map;
+
+import org.apache.lucene.util.OpenBitSet;
+
+import visual.Vdfa;
+import hierarchy.SimpleHierarchy;
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+
+
+/**
+ * XFst.java
+ * @author Kaustubh Beedkar {kbeedkar@uni-mannheim.de}
+ */
+public class XFst {
+	
+	public static final int DELIM = -1;
+	
+	int numStates = -1;
+
+	/**
+	 * stateTable as sparse matrix stateTable[fromState][label] = offset in
+	 * outputLabel-tostates parallel array
+	 */
+	Int2IntOpenHashMap[] stateTable;
+
+	/**
+	 * stateTable for wildcard labels wcStateTable[i] = offset in
+	 * outputLabel-toStates parallel array
+	 */
+	int[] wcStateTable;
+
+	/**
+	 * boolean index on states acceptedState[i] = true if state i is a final
+	 * state
+	 */
+	boolean[] acceptedStates;
+
+	/** Initial state of the FST */
+	int initialState;
+
+	/** hierarchy */
+	SimpleHierarchy hierarchy = SimpleHierarchy.getInstance();
+
+	/** parallel arrays for storing outputLabel-state pairs */
+	public ObjectArrayList<OutputLabel> oLabelList = new ObjectArrayList<OutputLabel>();
+	public IntArrayList states = new IntArrayList();
+
+	/**
+	 * boolean index to store, if there is only one wild card transition from a
+	 * state
+	 */
+	boolean[] noWcTransition;
+
+	/**
+	 * Index to store if there is a transition that matches the input label
+	 */
+	OpenBitSet[] tIndex;
+	
+	
+	// - Methods
+
+	XFst() {
+	};
+
+	
+	public void init(int numDfaStates) {
+		init(numDfaStates, true);
+	}
+	
+	public void init(int numDfaStates, boolean createIndex) {
+		acceptedStates = new boolean[numDfaStates];
+		noWcTransition = new boolean[numDfaStates];
+		wcStateTable = new int[numDfaStates];
+		stateTable = new Int2IntOpenHashMap[numDfaStates];
+
+		for (int i = 0; i < numDfaStates; ++i) {
+			stateTable[i] = new Int2IntOpenHashMap();
+			stateTable[i].defaultReturnValue(-1);
+			wcStateTable[i] = -1;
+		}
+		this.numStates = numDfaStates;		
+		
+		if(createIndex) {
+			tIndex = new OpenBitSet[numStates];
+			for(int i = 0; i < numStates; ++i) {
+				tIndex[i] = new OpenBitSet(hierarchy.size());
+			}
+		}
+	}
+
+	public void addAcceptedState(int state) {
+		acceptedStates[state] = true;
+	}
+
+	public boolean isAccept(int state) {
+		return acceptedStates[state];
+	}
+
+	public int getInitialState() {
+		return initialState;
+	}
+
+	public void add(OutputLabel yield, int state) {
+		oLabelList.add(yield);
+		states.add(state);
+	}
+
+	public int getNumStates() {
+		return numStates;
+	}
+	
+	public void add(int fromState, int ilabel) {
+		add(fromState, ilabel, true);
+	}
+	
+	public void add(int fromState, int ilabel, boolean createIndex) {
+		// add a separator in yield/state arraylists
+		if (states.size() > 0) {
+			oLabelList.add(new OutputLabel());
+			states.add(DELIM);
+		}
+
+		// if the label is a wild card, add the offset in the
+		// secondary statetable for wild card
+		if (ilabel == 0) {
+			wcStateTable[fromState] = states.size();
+		} else {
+			stateTable[fromState].put(ilabel, states.size());
+			noWcTransition[fromState] = true;
+			
+			// Add to tIndex if input label is not a wild card
+			if(createIndex) {
+				if(ilabel < 0) {
+					// Set only bit for ilabel
+					tIndex[fromState].fastSet(-ilabel);
+				} else {
+					// Set bit for desc of ilabel
+					for(int itemId : hierarchy.getDesc(ilabel)) {
+						tIndex[fromState].fastSet(itemId);
+					}	
+				}
+			}
+		}
+	}
+
+	/** Returns the offset for the yield,state pair */
+	public int getOffset(int from, int label) {
+		
+		if (tIndex[from].fastGet(label)) {
+		//if(noWcTransition[from]){
+			// a=
+			int offset = stateTable[from].get(-label);
+			if (offset >= 0)
+				return offset;
+			// a
+			offset = stateTable[from].get(label);
+			if (offset >= 0)
+				return offset;
+
+			// check parents of a
+			while (hierarchy.hasParent(label)) {
+				label = hierarchy.getParent(label);
+				offset = stateTable[from].get(label);
+				if (offset >= 0)
+					return offset;
+			}
+		} 
+		
+		return wcStateTable[from];
+		
+	}
+	
+	
+	
+	
+	
+	public void print(String file) {
+
+		Vdfa vdfa = new Vdfa(file);
+		vdfa.beginGraph();
+
+		for (int i = 0; i < stateTable.length; ++i) {
+			int from = i;
+			for (Map.Entry<Integer, Integer> entry : stateTable[i].entrySet()) {
+				int ilabel = entry.getKey();
+				int offset = entry.getValue();
+
+				while (offset < states.size()) {
+					if (states.get(offset) == -1)
+						break;
+					OutputLabel olabel = oLabelList.get(offset);
+					int to = states.get(offset);
+					vdfa.add(String.valueOf(from), String.valueOf(ilabel), olabel.toString(), String.valueOf(to));
+					offset++;
+				}
+			}
+		}
+
+		for (int i = 0; i < wcStateTable.length; ++i) {
+			if (wcStateTable[i] != -1) {
+				int from = i;
+				int ilabel = 0;
+				int offset = wcStateTable[i];
+
+				while (offset < states.size()) {
+					if (states.get(offset) == -1)
+						break;
+					OutputLabel olabel = oLabelList.get(offset);
+					int to = states.get(offset);
+					vdfa.add(String.valueOf(from), String.valueOf(ilabel), olabel.toString(), String.valueOf(to));
+					offset++;
+				}
+			}
+		}
+		for (int i = 0; i < acceptedStates.length; i++) {
+			if (acceptedStates[i]) {
+				vdfa.addAccepted(String.valueOf(i));
+			}
+		}
+		vdfa.endGraph();
+	}
+	
+}

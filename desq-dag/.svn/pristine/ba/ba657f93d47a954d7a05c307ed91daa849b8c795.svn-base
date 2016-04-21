@@ -1,0 +1,90 @@
+package driver;
+
+
+import java.util.Arrays;
+
+import patex.PatEx;
+import mining.DfsMiner;
+import utils.Dictionary;
+import writer.LogWriter;
+import writer.SequentialWriter;
+import fst.XFst;
+import fst.Fst;
+import hierarchy.SimpleHierarchy;
+
+
+/**
+ * FlexSeDriver.java
+ * @author Kaustubh Beedkar {kbeedkar@uni-mannheim.de}
+ */
+public class FlexSeDriver {
+
+	/** <input> <output> <pattern> <support> <logfile> <0?> */
+	public static void main(String[] args) throws Exception {
+		System.out.println("DESQ-DFS : " + Arrays.toString(args));
+		String input = args[0];
+		String output = args[1];
+		String pattern = args[2];
+		String aPattern = ".* " + pattern.trim();
+		int support = Integer.parseInt(args[3]);
+		String logfile = args[4];
+		boolean writeOutput = (args[5].equals("0")) ? false : true;
+		
+		
+		String sequenceFile = input.concat("/raw/part-r-00000");
+		String dictionary = input.concat("/wc/part-r-00000");
+		
+				
+		/** load dictionary */
+		Dictionary dict = Dictionary.getInstance();
+		dict.load(dictionary, support);
+		
+		
+		/** initialize hierarchy */
+		int[] itemToParent = dict.getItemToParent();
+		SimpleHierarchy.getInstance().initialize(itemToParent);
+		
+		/** initialize writer */
+		if(writeOutput) {
+		SequentialWriter writer = SequentialWriter.getInstance();
+			writer.setItemIdToItemMap(dict.getItemIdToName());
+			writer.setOutputPath(output);
+		}
+		
+		
+		System.out.println(aPattern);
+		
+		long tS = System.currentTimeMillis();
+		
+		/** Generate FSTs */
+	
+		PatEx patEx = new PatEx(aPattern);
+		Fst cFst = patEx.translateToFst();
+		Fst pFst = cFst.prioritize();
+		
+		
+		/** Generate optimized FST used by miner */
+		XFst xPFst = pFst.optimizeForExecution();
+		
+		
+		/** Read the database and mine */
+		DfsMiner dfs = new DfsMiner(support, xPFst, writeOutput);
+		dfs.scanDatabase(sequenceFile);
+		dfs.mine();
+		
+		long tE = System.currentTimeMillis();
+		long totaltime = (long) ((tE-tS)/1000.0);
+		
+		/** Write stats to log*/
+		//method \t pattern \t support \ totaltime
+		LogWriter lwriter = LogWriter.getInstance();
+		lwriter.setOutputPath(logfile);
+		String s = null;
+		s = dfs.getClass().getSimpleName() 
+		+ "\t" + pattern 
+		+ "\t" + support 
+		+ "\t" + totaltime 
+		+ "\t" + dfs.noOutputPatterns();
+		lwriter.write(s);
+	}
+}

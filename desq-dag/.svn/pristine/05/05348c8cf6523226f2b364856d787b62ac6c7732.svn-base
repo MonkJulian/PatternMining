@@ -1,0 +1,115 @@
+package fst;
+
+
+import visual.Vdfa;
+
+
+/**
+ * XFst.java
+ * @author Kaustubh Beedkar {kbeedkar@uni-mannheim.de}
+ */
+public class XFst {
+	
+	protected int[][] ilabels;
+	
+	protected OutputLabel[][] olabels;
+	
+	protected int[][] toStates;
+	
+	protected int initialState;
+	
+	private int[] stateSize;
+	
+	private boolean[] finalStates;
+	
+	public XFst(int initialState, int numStates) {
+		this.initialState = initialState;
+		ilabels = new int[numStates][];
+		olabels = new OutputLabel[numStates][];
+		toStates = new int[numStates][];
+		finalStates = new boolean[numStates];
+		
+		stateSize = new int[numStates];
+		for(int i = 0; i < numStates; ++i) {
+			stateSize[i] = 0;
+		}
+	}
+	
+	public void initializeState(int state, int numTransitions) {
+		ilabels[state] = new int[numTransitions];
+		olabels[state] = new OutputLabel[numTransitions];
+		toStates[state] = new int[numTransitions];
+	}
+	
+	public void addTransition(int fromState, int ilabel, OutputLabel olabel, int toState) {
+		ilabels[fromState][stateSize[fromState]] = ilabel;
+		olabels[fromState][stateSize[fromState]] = olabel;
+		toStates[fromState][stateSize[fromState]] = toState;
+		stateSize[fromState]++;
+	}
+	
+	public void addFinalState(int state) {
+		finalStates[state] = true;
+	}
+	
+	public boolean isFinalState(int state) {
+		return finalStates[state];
+	}
+	
+	public int[] getInputLabels(int state) {
+		return ilabels[state];
+	}
+	
+	public OutputLabel[] getOutputLabels(int state) {
+		return olabels[state];
+	}
+	
+	public int getInputLabel(int state, int transitionId) {
+		return ilabels[state][transitionId];
+	}
+	
+	public OutputLabel getOutputLabel(int state, int transitionId) {
+		return olabels[state][transitionId];
+	}
+	
+	public boolean canStep(int itemId, int transition) {
+		//TODO
+		return true;
+	}
+	
+	public int numTransitions(int state) {
+		return ilabels[state].length;
+		/*
+		 * alternately
+		 * return stateSize[state];
+		 */
+	}
+	
+	public int numStates() {
+		return stateSize.length;
+	}
+	
+	
+	
+	
+	
+	
+	
+	
+	public void print(String file) {
+		
+		Vdfa vdfa = new Vdfa(file);
+		vdfa.beginGraph();
+
+		for(int s = 0; s < numStates(); ++s) {
+			for(int tId = 0; tId < numTransitions(s); ++ tId) {
+				vdfa.add(String.valueOf(s), String.valueOf(ilabels[s][tId]), olabels[s][tId].toString(), String.valueOf(toStates[s][tId]));
+			}
+			if(isFinalState(s)) {
+				vdfa.addAccepted(String.valueOf(s));
+			}
+		}
+		vdfa.endGraph();
+	}
+	
+}

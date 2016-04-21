@@ -1,0 +1,109 @@
+package mining;
+
+import driver.DesqCountDriver;
+import it.unimi.dsi.fastutil.ints.IntArrayList;
+import fst.OutputLabel;
+import fst.XFst;
+
+public class OnePassRecursive extends DesqCount {
+
+	// Parallel arrays for outputLabel-toState pairs
+	OutputLabel[] oLabelArray;
+
+	int[] toStateArray;
+
+	// Buffer to store output sequences
+	IntArrayList buffer = new IntArrayList();
+
+	public OnePassRecursive(int sigma, XFst xPFst, boolean writeOutput, boolean useFlist) {
+		super(sigma, xPFst, writeOutput, useFlist);
+
+		// Initialize parallel arrays
+		this.oLabelArray = new OutputLabel[xPFst.oLabelList.size()];
+		this.pFst.states.add(XFst.DELIM);
+		this.toStateArray = new int[pFst.states.size()];
+
+		this.pFst.oLabelList.toArray(oLabelArray);
+		this.pFst.states.toArray(toStateArray);
+	}
+
+	@Override
+	protected void computeMatch() {
+		
+		DesqCountDriver.forwardPassTime.start();
+		
+		buffer.clear();
+		computeMatch(0, pFst.getInitialState());
+		
+		DesqCountDriver.forwardPassTime.stop();
+	}
+
+	private void computeMatch(int pos, int state) {
+		if (pFst.isAccept(state)) {
+			if (!buffer.isEmpty()) {
+				//System.out.println(buffer);
+				countSequence(buffer.toIntArray());
+			}
+		}
+		if (pos == sequence.length) {
+			return;
+		}
+
+		int item = sequence[pos];
+		int offset = pFst.getOffset(state, item);
+
+		if (offset >= 0) {
+			for (; toStateArray[offset] != XFst.DELIM; offset++) {
+				int nextState = toStateArray[offset];
+				int yieldItem = oLabelArray[offset].item;
+				int currItem = item;
+
+				switch (oLabelArray[offset].type) {
+				case EPSILON:
+					computeMatch(pos + 1, nextState);
+					break;
+				case CONSTANT:
+					if (!useFlist || flist[yieldItem] >= sigma) {
+						buffer.add(yieldItem);
+						computeMatch(pos + 1, nextState);
+						buffer.remove(buffer.size() - 1);
+					} 
+					break;
+				case SELF:
+					if (!useFlist || flist[item] >= sigma) {
+						buffer.add(item);
+						computeMatch(pos + 1, nextState);
+						buffer.remove(buffer.size() - 1);
+					} 
+					break;
+				case SELFGENERALIZE:
+					// add parents
+					while (hierarchy.hasParent(currItem)) {
+						if (currItem == yieldItem)
+							break;
+						currItem = hierarchy.getParent(currItem);
+
+						if (!useFlist || flist[currItem] >= sigma) {
+							buffer.add(currItem);
+							computeMatch(pos + 1, nextState);
+							buffer.remove(buffer.size() - 1);
+						} 
+					}
+
+					// add item
+					if (!useFlist || flist[item] >= sigma) {
+						buffer.add(item);
+						computeMatch(pos + 1, nextState);
+						buffer.remove(buffer.size() - 1);
+					} 
+					break;
+				default:
+					break;
+
+				}
+			}
+
+		}
+	}
+
+}

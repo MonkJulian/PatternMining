@@ -1,0 +1,352 @@
+package fst;
+
+
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedList;
+import java.util.Set;
+
+import visual.Vdfa;
+
+
+
+/**
+ * Fst.java
+ * @author Kaustubh Beedkar {kbeedkar@uni-mannheim.de}
+ * 
+ * TODO: Make initialState as set of states
+ */
+public class Fst {
+
+	State initialState;
+	
+	boolean priorirized;
+	
+	boolean reverse;
+	
+	int numStates;
+	
+	Set<State> initialStates;
+	
+	Fst() {
+		this.initialState = new State();
+		this.priorirized = false;
+		reverse = false;
+		this.numStates = -1;
+	};
+
+	
+	Fst(State initialState) {
+		this.initialState = initialState;
+		this.priorirized = false;
+		reverse = false;
+		this.numStates = -1;
+	}
+
+	
+	public State getInitialState() {
+		return initialState;
+	}
+
+	
+	public void setInitialState(State initialState) {
+		this.initialState = initialState;
+	}
+
+	public void setInitialStates(Set<State> sset) {
+		this.initialStates = sset;
+		reverse = true;
+	}
+	
+	public Set<State> getAcceptStates() {
+		HashSet<State> accepts = new HashSet<State>();
+		HashSet<State> visited = new HashSet<State>();
+		LinkedList<State> worklist = new LinkedList<State>();
+		worklist.add(initialState);
+		visited.add(initialState);
+		while (worklist.size() > 0) {
+			State s = worklist.removeFirst();
+			if (s.accept)
+				accepts.add(s);
+			for (Transition t : s.transitions)
+				if (!visited.contains(t.getToState())) {
+					visited.add(t.getToState());
+					worklist.add(t.getToState());
+				}
+		}
+		return accepts;
+	}
+
+	
+	public int getNumStates() {
+		if (numStates < 0) {
+			HashSet<State> visited = new HashSet<State>();
+			LinkedList<State> worklist = new LinkedList<State>();
+			worklist.add(initialState);
+			visited.add(initialState);
+			while (worklist.size() > 0) {
+				State s = worklist.removeFirst();
+				for (Transition t : s.transitions)
+					if (!visited.contains(t.getToState())) {
+						visited.add(t.getToState());
+						worklist.add(t.getToState());
+					}
+			}
+			numStates = visited.size();
+		}
+		return numStates;
+	}
+
+
+	public Fst prioritize() {
+		return FstOperations.prioritize(this);
+	}
+	
+	
+	public void reverse() {
+		FstOperations.reverse(this);
+	}
+
+	public Fst minimize() {
+		return FstOperations.minimize(this);
+	}
+	
+	/**
+	 * Reset state ids by assigning consecutive numbers
+	 * @return number of states in FST
+	 */
+	public void resetStateIds() {
+		int number = 0;
+		Set<State> visited = new HashSet<State>();
+		LinkedList<State> worklist = new LinkedList<State>();
+		worklist.add(initialState);
+		
+		while (worklist.size() > 0) {
+			State s = worklist.removeFirst();
+			if (!visited.contains(s)) {
+				s.id = number++;
+				for (Transition t : s.transitions) {
+					worklist.add(t.to);
+				}
+				visited.add(s);
+			}
+		}
+		// Update numStates here as well
+		numStates = number;
+	}
+	
+	
+	public XFst optimizeForExecution() {
+		return optimizeForExecution(true);
+	}
+	
+	public XFst optimizeForExecution(boolean resetStateIds) {
+		XFst xFst = new XFst();
+		
+		if (resetStateIds) {
+			this.resetStateIds();
+		}
+		
+		// Initialize XFst
+		xFst.init(getNumStates());
+		xFst.initialState = initialState.id;
+
+		HashSet<State> visited = new HashSet<State>();
+		LinkedList<State> worklist = new LinkedList<State>();
+		
+		
+		if(priorirized) {
+			// Optimize for pFST simulation
+			worklist.add(initialState);
+
+			while (worklist.size() > 0) {
+				State s = worklist.removeFirst();
+				if (!visited.contains(s)) {
+					if (s.accept) {
+						xFst.addAcceptedState(s.id);
+					}
+
+					for (int iLabel : FstOperations.getInputLabels(s)) {
+						// add to statetable, stateTable[from][offset in yield,state pair]
+						xFst.add(s.id, iLabel);
+						for (Transition t : s.transitions) {
+							worklist.add(t.to);
+							if (t.iLabel == iLabel) {
+								// add to yield,state pairs
+								xFst.add(t.oLabel, t.to.id);
+							}
+						}
+					}
+				}
+				visited.add(s);
+			}
+		}
+		else {
+			
+			HashMap<OutputLabel, HashSet<Integer>> M = new HashMap<OutputLabel, HashSet<Integer>>();
+			
+			// Optimize for cFST simulation
+			if(reverse) {
+				worklist.addAll(initialStates);
+			} else {
+				worklist.add(initialState);
+			}
+			
+			while (worklist.size() > 0){
+				State s = worklist.removeFirst();
+				if(!visited.contains(s)) {
+					if(s.accept) {
+						xFst.addAcceptedState(s.id);
+					}
+					
+					for(int iLabel : FstOperations.getInputLabels(s)) {
+						
+						M.clear();
+						
+						// add stateTable[fromState][iLabel] = offset in outputLabel-toState array
+						xFst.add(s.id, iLabel);
+						for (Transition t : s.transitions) {
+							worklist.add(t.to);
+							if(FstOperations.subsumes(t.iLabel, iLabel)) {
+								
+								HashSet<Integer> toSet = M.get(t.oLabel);
+								if(toSet == null) {
+									toSet = new HashSet<Integer>();
+									M.put(t.oLabel, toSet);
+								}
+								toSet.add(t.to.id);
+								
+								
+							}
+						}
+						// add to outputLabel-toState Array
+						for(OutputLabel oLabel : M.keySet()) {
+							for(int toId : M.get(oLabel)) {
+								xFst.add(oLabel, toId);
+							}
+						}
+						
+					}
+				}
+				visited.add(s);
+			}
+		}
+		return xFst;
+	}
+
+
+	// for quick and dirty debugging
+	
+	public void print(String file) {
+		print(file, true);
+	}
+	
+	
+	public void print(String file, boolean resetStateIds) {
+		
+		if(resetStateIds)
+			resetStateIds();
+		
+		Vdfa vdfa = new Vdfa(file);
+		vdfa.beginGraph();
+		
+		LinkedList<State> worklist = new LinkedList<State>();
+		HashSet<State> visited = new HashSet<State>();
+		worklist.add(initialState);
+		
+		while (worklist.size() > 0) {
+			State s = worklist.removeFirst();
+			if (!visited.contains(s)) {
+				for (Transition t : s.transitions) {
+					worklist.add(t.to);
+					vdfa.add(String.valueOf(s.id), String.valueOf(t.iLabel), t.oLabel.toString(), String.valueOf(t.to.id));
+				}
+			}
+			visited.add(s);
+		}
+		
+		for (State s : getAcceptStates()) {
+			vdfa.addAccepted(String.valueOf(s.id));
+		}
+		vdfa.endGraph();
+	}
+	
+
+	public Set<State> getStates() {
+		Set<State> visited 	= new HashSet<State>();
+		LinkedList<State> worklist = new LinkedList<State>();
+		worklist.add(initialState);
+		visited.add(initialState);
+		while (worklist.size() > 0) {
+			State s = worklist.removeFirst();
+			for (Transition t : s.transitions)
+				if (!visited.contains(t.to)) {
+					visited.add(t.to);
+					worklist.add(t.to);
+				}
+		}
+		return visited;
+	}
+	
+	public Fst clone() {
+		Fst nClone = new Fst();
+		
+		HashMap<State, State> stateMap = new HashMap<State, State>();
+		Set<State> states = getStates();
+		for (State state : states)
+			stateMap.put(state, new State());
+		
+		for (State state : states) {
+			State sClone = stateMap.get(state);
+			sClone.accept = state.accept;
+			if(state == initialState) {
+				nClone.initialState = sClone;
+			}
+			for(Transition t : state.transitions) {
+				sClone.transitions.add(new Transition(t.iLabel, t.oLabel, stateMap.get(t.to)));
+			}
+		}
+		return nClone;
+	}
+
+	public void writeToStdout() {
+		
+		LinkedList<State> worklist = new LinkedList<State>();
+		HashSet<State> visited = new HashSet<State>();
+		worklist.add(initialState);
+		
+		// Write initial state
+		System.out.println(initialState.id + "\t" + this.getNumStates());
+		//System.out.println("State transitions");
+		while (worklist.size() > 0) {
+			State s = worklist.removeFirst();
+			if (!visited.contains(s)) {
+				for (Transition t : s.transitions) {
+					worklist.add(t.to);
+					//vdfa.add(t.to.id, s.id, t.yield, t.label, false);
+					String olabel = null;
+					if (t.oLabel.type == OutputLabel.Type.EPSILON) {
+						olabel = "eps";
+					} else if (t.oLabel.type == OutputLabel.Type.CONSTANT) {
+						olabel = String.valueOf(t.oLabel.item);
+					} else if (t.oLabel.type == OutputLabel.Type.SELF) {
+						olabel = "$";
+					} else if (t.oLabel.type == OutputLabel.Type.SELFGENERALIZE) {
+						olabel = "$-" + String.valueOf(t.oLabel.item);
+					}
+					
+					System.out.println(s.id + "\t" + t.to.id + "\t" + t.iLabel + "\t" + olabel);
+				}
+			}
+			visited.add(s);
+		}
+		
+		//System.out.println("Accepted states:");
+		//Write final states
+		for (State s : getAcceptStates()) {
+			System.out.println(s.id);		
+		}		
+	}
+
+}
